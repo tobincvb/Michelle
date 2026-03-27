@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NDIS Funding Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #f8fafc; }
+  input, select { outline: none; }
+  input:focus, select:focus { border-color: #6366f1 !important; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useMemo } = React;
+
+const BUDGETS = {
+support: {
+label: “Support Worker”,
+yearlyBudget: 55585.64,
+yearlyHours: 832,
+hourlyRate: 67,
+color: “#6366f1”, light: “#eef2ff”, border: “#c7d2fe”,
+},
+physio: {
+label: “Physio / EP”,
+yearlyBudget: 4783,
+yearlyHours: 26,
+hourlyRate: 183.99,
+color: “#0ea5e9”, light: “#e0f2fe”, border: “#bae6fd”,
+},
+ot: {
+label: “Occupational Therapy”,
+yearlyBudget: 4783,
+yearlyBudgetY2: 2760,
+yearlyHours: 26,
+yearlyHoursY2: 15,
+hourlyRate: 183.99,
+color: “#10b981”, light: “#d1fae5”, border: “#a7f3d0”,
+},
+};
+
+const fmt = n => “$” + Number(n).toLocaleString(“en-AU”, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtH = n => Number(n).toFixed(1) + “h”;
+const pct = (used, total) => Math.min(100, (used / total) * 100);
+
+const STORAGE_KEY = “ndis_entries”;
+const loadEntries = () => {
+try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || { support: [], physio: [], ot: [] }; }
+catch { return { support: [], physio: [], ot: [] }; }
+};
+const saveEntries = entries => localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+
+function ProgressBar({ value, color }) {
+const c = value > 90 ? “#ef4444” : value > 75 ? “#f59e0b” : color;
+return (
+<div style={{ background: “#e5e7eb”, borderRadius: 999, height: 10, overflow: “hidden” }}>
+<div style={{ width: value + “%”, background: c, height: “100%”, borderRadius: 999, transition: “width 0.5s” }} />
+</div>
+);
+}
+
+function Card({ title, color, light, border, children }) {
+return (
+<div style={{ background: light, border: “1.5px solid “ + border, borderRadius: 16, padding: “20px 22px”, marginBottom: 18 }}>
+<div style={{ fontWeight: 700, fontSize: 15, color, marginBottom: 12 }}>{title}</div>
+{children}
+</div>
+);
+}
+
+function StatRow({ label, value, sub, color }) {
+return (
+<div style={{ display: “flex”, justifyContent: “space-between”, alignItems: “baseline”, marginBottom: 6 }}>
+<span style={{ fontSize: 13, color: “#6b7280” }}>{label}</span>
+<span style={{ fontWeight: 700, fontSize: 15, color: color || “#111827” }}>
+{value}{sub && <span style={{ fontWeight: 400, fontSize: 12, color: “#9ca3af”, marginLeft: 4 }}>{sub}</span>}
+</span>
+</div>
+);
+}
+
+function App() {
+const [year, setYear] = useState(1);
+const [tab, setTab] = useState(“overview”);
+const [entries, setEntries] = useState(loadEntries);
+const [form, setForm] = useState({ cat: “support”, date: “”, hours: “”, amount: “”, note: “” });
+
+const updateEntries = updated => { setEntries(updated); saveEntries(updated); };
+
+const addEntry = () => {
+if (!form.date || (!form.hours && !form.amount)) return;
+const hours = parseFloat(form.hours) || 0;
+const amount = parseFloat(form.amount) || (hours * BUDGETS[form.cat].hourlyRate);
+const updated = { …entries, [form.cat]: […entries[form.cat], { date: form.date, hours, amount, note: form.note, id: Date.now() }] };
+updateEntries(updated);
+setForm(f => ({ …f, date: “”, hours: “”, amount: “”, note: “” }));
+};
+
+const removeEntry = (cat, id) => {
+updateEntries({ …entries, [cat]: entries[cat].filter(x => x.id !== id) });
+};
+
+const totals = useMemo(() => {
+const result = {};
+for (const key of [“support”, “physio”, “ot”]) {
+const b = BUDGETS[key];
+const budget = key === “ot” && year === 2 ? b.yearlyBudgetY2 : b.yearlyBudget;
+const budgetHours = key === “ot” && year === 2 ? b.yearlyHoursY2 : b.yearlyHours;
+const usedAmount = entries[key].reduce((s, e) => s + e.amount, 0);
+const usedHours = entries[key].reduce((s, e) => s + e.hours, 0);
+result[key] = {
+budget, budgetHours, usedAmount, usedHours,
+remaining: budget - usedAmount,
+remainingHours: budgetHours - usedHours,
+pctAmount: pct(usedAmount, budget),
+pctHours: pct(usedHours, budgetHours),
+monthly: budget / 12,
+weekly: budget / 52,
+};
+}
+return result;
+}, [entries, year]);
+
+const grandTotal = useMemo(() => {
+const budget = Object.values(totals).reduce((s, t) => s + t.budget, 0);
+const used = Object.values(totals).reduce((s, t) => s + t.usedAmount, 0);
+return { budget, used, remaining: budget - used };
+}, [totals]);
+
+const inputStyle = { padding: “8px 12px”, borderRadius: 8, border: “1.5px solid #d1d5db”, fontSize: 13, width: “100%”, background: “#fff” };
+
+return (
+<div style={{ fontFamily: “system-ui, sans-serif”, background: “#f8fafc”, minHeight: “100vh”, paddingBottom: 40 }}>
+{/* Header */}
+<div style={{ background: “linear-gradient(135deg, #4f46e5 0%, #0ea5e9 100%)”, padding: “28px 24px 20px”, color: “#fff” }}>
+<div style={{ fontSize: 11, letterSpacing: 1.5, opacity: 0.8, textTransform: “uppercase”, marginBottom: 4 }}>NDIS Funding Tracker</div>
+<div style={{ fontSize: 22, fontWeight: 800, marginBottom: 16 }}>Budget Dashboard</div>
+<div style={{ display: “flex”, gap: 8, marginBottom: 16 }}>
+{[1, 2].map(y => (
+<button key={y} onClick={() => setYear(y)} style={{
+background: year === y ? “rgba(255,255,255,0.25)” : “rgba(255,255,255,0.1)”,
+border: year === y ? “1.5px solid rgba(255,255,255,0.6)” : “1.5px solid rgba(255,255,255,0.2)”,
+color: “#fff”, borderRadius: 8, padding: “5px 14px”, cursor: “pointer”,
+fontWeight: year === y ? 700 : 400, fontSize: 13
+}}>Year {y}</button>
+))}
+</div>
+<div style={{ display: “grid”, gridTemplateColumns: “1fr 1fr 1fr”, gap: 10 }}>
+{[
+{ l: “Total Budget”, v: fmt(grandTotal.budget) },
+{ l: “Total Spent”, v: fmt(grandTotal.used) },
+{ l: “Remaining”, v: fmt(grandTotal.remaining) },
+].map(({ l, v }) => (
+<div key={l} style={{ background: “rgba(255,255,255,0.15)”, borderRadius: 10, padding: “10px 12px” }}>
+<div style={{ fontSize: 10, opacity: 0.8, marginBottom: 3, textTransform: “uppercase”, letterSpacing: 0.8 }}>{l}</div>
+<div style={{ fontWeight: 800, fontSize: 15 }}>{v}</div>
+</div>
+))}
+</div>
+</div>
+
+```
+  {/* Tabs */}
+  <div style={{ display: "flex", background: "#fff", borderBottom: "1.5px solid #e5e7eb", padding: "0 20px" }}>
+    {["overview", "log", "history"].map(t => (
+      <button key={t} onClick={() => setTab(t)} style={{
+        border: "none", background: "none", padding: "13px 16px", cursor: "pointer",
+        fontWeight: tab === t ? 700 : 400, fontSize: 13,
+        color: tab === t ? "#4f46e5" : "#6b7280",
+        borderBottom: tab === t ? "2.5px solid #4f46e5" : "2.5px solid transparent",
+        textTransform: "capitalize"
+      }}>{t}</button>
+    ))}
+  </div>
+
+  <div style={{ padding: "20px 18px", maxWidth: 640, margin: "0 auto" }}>
+
+    {/* OVERVIEW */}
+    {tab === "overview" && Object.entries(BUDGETS).map(([key, b]) => {
+      const t = totals[key];
+      return (
+        <Card key={key} title={b.label} color={b.color} light={b.light} border={b.border}>
+          <StatRow label="Annual Budget" value={fmt(t.budget)} color={b.color} />
+          <StatRow label="Monthly Budget" value={fmt(t.monthly)} />
+          <StatRow label="Weekly Budget" value={fmt(t.weekly)} />
+          <StatRow label="Hourly Rate" value={fmt(b.hourlyRate)} sub="/hr" />
+          <StatRow label="Annual Hours" value={fmtH(t.budgetHours)} />
+          <div style={{ margin: "12px 0 4px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>
+              <span>Spend: {fmt(t.usedAmount)} of {fmt(t.budget)}</span>
+              <span style={{ color: t.pctAmount > 90 ? "#ef4444" : t.pctAmount > 75 ? "#f59e0b" : b.color, fontWeight: 700 }}>{t.pctAmount.toFixed(1)}%</span>
+            </div>
+            <ProgressBar value={t.pctAmount} color={b.color} />
+          </div>
+          {t.usedHours > 0 && (
+            <div style={{ margin: "10px 0 4px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>
+                <span>Hours: {fmtH(t.usedHours)} of {fmtH(t.budgetHours)}</span>
+                <span>{t.pctHours.toFixed(1)}%</span>
+              </div>
+              <ProgressBar value={t.pctHours} color={b.color} />
+            </div>
+          )}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 12 }}>
+            <div style={{ background: "#fff", borderRadius: 8, padding: "8px 12px", textAlign: "center" }}>
+              <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 2 }}>$ Remaining</div>
+              <div style={{ fontWeight: 700, color: t.remaining < 0 ? "#ef4444" : "#111827" }}>{fmt(t.remaining)}</div>
+            </div>
+            <div style={{ background: "#fff", borderRadius: 8, padding: "8px 12px", textAlign: "center" }}>
+              <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 2 }}>Hours Remaining</div>
+              <div style={{ fontWeight: 700, color: t.remainingHours < 0 ? "#ef4444" : "#111827" }}>{fmtH(t.remainingHours)}</div>
+            </div>
+          </div>
+        </Card>
+      );
+    })}
+
+    {/* LOG */}
+    {tab === "log" && (
+      <div>
+        <div style={{ background: "#fff", borderRadius: 16, border: "1.5px solid #e5e7eb", padding: "20px 18px", marginBottom: 18 }}>
+          <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 14, color: "#111827" }}>Log a Spend Entry</div>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ fontSize: 12, color: "#6b7280", display: "block", marginBottom: 4 }}>Category</label>
+            <select value={form.cat} onChange={e => setForm(f => ({ ...f, cat: e.target.value }))} style={inputStyle}>
+              <option value="support">Support Worker</option>
+              <option value="physio">Physio / EP</option>
+              <option value="ot">Occupational Therapy</option>
+            </select>
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ fontSize: 12, color: "#6b7280", display: "block", marginBottom: 4 }}>Date</label>
+            <input type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} style={inputStyle} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+            <div>
+              <label style={{ fontSize: 12, color: "#6b7280", display: "block", marginBottom: 4 }}>Hours Used</label>
+              <input type="number" placeholder="e.g. 2" value={form.hours} onChange={e => setForm(f => ({ ...f, hours: e.target.value }))} style={inputStyle} />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, color: "#6b7280", display: "block", marginBottom: 4 }}>Amount ($) — optional</label>
+              <input type="number" placeholder="Auto-calc from hours" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} style={inputStyle} />
+            </div>
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 12, color: "#6b7280", display: "block", marginBottom: 4 }}>Note (optional)</label>
+            <input type="text" placeholder="e.g. Weekly support session" value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} style={inputStyle} />
+          </div>
+          {form.hours && (
+            <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 13, color: "#166534" }}>
+              💡 Estimated cost: {fmt((parseFloat(form.hours) || 0) * BUDGETS[form.cat].hourlyRate)}
+            </div>
+          )}
+          <button onClick={addEntry} style={{ background: "#4f46e5", color: "#fff", border: "none", borderRadius: 8, padding: "9px 18px", fontWeight: 600, cursor: "pointer", fontSize: 13 }}>
+            + Add Entry
+          </button>
+        </div>
+        <div style={{ fontWeight: 700, fontSize: 14, color: "#374151", marginBottom: 10 }}>Current Balances</div>
+        {Object.entries(BUDGETS).map(([key, b]) => {
+          const t = totals[key];
+          return (
+            <div key={key} style={{ background: "#fff", border: "1.5px solid " + b.border, borderRadius: 12, padding: "12px 16px", marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 13, color: b.color }}>{b.label}</div>
+                <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 2 }}>Spent: {fmt(t.usedAmount)}</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontWeight: 700, fontSize: 15, color: t.remaining < 0 ? "#ef4444" : "#111827" }}>{fmt(t.remaining)}</div>
+                <div style={{ fontSize: 11, color: "#9ca3af" }}>remaining</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    )}
+
+    {/* HISTORY */}
+    {tab === "history" && Object.entries(BUDGETS).map(([key, b]) => {
+      const list = entries[key];
+      return (
+        <Card key={key} title={b.label} color={b.color} light={b.light} border={b.border}>
+          {list.length === 0 ? (
+            <div style={{ fontSize: 13, color: "#9ca3af", textAlign: "center", padding: "10px 0" }}>No entries yet</div>
+          ) : (
+            [...list].sort((a, z) => new Date(z.date) - new Date(a.date)).map(e => (
+              <div key={e.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#fff", borderRadius: 8, padding: "8px 12px", marginBottom: 6 }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>{e.date}</div>
+                  <div style={{ fontSize: 11, color: "#9ca3af" }}>{e.hours ? e.hours + "h" : ""}{e.note ? " — " + e.note : ""}</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontWeight: 700, color: b.color }}>{fmt(e.amount)}</span>
+                  <button onClick={() => removeEntry(key, e.id)} style={{ background: "#fee2e2", border: "none", borderRadius: 6, color: "#ef4444", cursor: "pointer", fontWeight: 700, fontSize: 12, padding: "3px 8px" }}>✕</button>
+                </div>
+              </div>
+            ))
+          )}
+          {list.length > 0 && (
+            <div style={{ borderTop: "1.5px solid " + b.border, marginTop: 8, paddingTop: 8, display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+              <span style={{ color: "#6b7280" }}>Total logged</span>
+              <span style={{ fontWeight: 700, color: b.color }}>{fmt(totals[key].usedAmount)} / {fmtH(totals[key].usedHours)}</span>
+            </div>
+          )}
+        </Card>
+      );
+    })}
+  </div>
+</div>
+```
+
+);
+}
+
+ReactDOM.createRoot(document.getElementById(“root”)).render(<App />);
+</script>
+
+</body>
+</html>
